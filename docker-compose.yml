@@ -1,0 +1,56 @@
+volumes:
+  pg_data:
+  static:   # том для общей статики (frontend + backend)
+
+services:
+  db:
+    image: postgres:13.10
+    container_name: taski-db
+    env_file: .env
+    environment:
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    container_name: taski-backend
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    # подключаем общий том куда скопируем собранную статику Django
+    volumes:
+      - static:/backend_static
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: taski-frontend
+    env_file: .env
+    # соберём фронт (npm run build делает Dockerfile фронта),
+    # затем СКОПИРУЕМ готовую статику в общий том и завершимся
+    command: sh -c "cp -r /app/build/. /frontend_static/"
+    volumes:
+      - static:/frontend_static
+    depends_on:
+      - backend
+    restart: "no"  # контейнер завершится после копирования — так и нужно
+
+  gateway:
+    build: ./gateway
+    container_name: taski-gateway
+    # Nginx читает статику из /staticfiles (наш общий том)
+    volumes:
+      - static:/staticfiles
+    depends_on:
+      - backend
+    ports:
+      - "8000:80"   # весь входной трафик идёт через Nginx
+    restart: unless-stopped
